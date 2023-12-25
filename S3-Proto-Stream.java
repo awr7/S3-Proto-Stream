@@ -1,14 +1,15 @@
+
+
+
+import java.io.IOException; 
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
-import java.net.SocketAddress;
 import java.io.File;
 import java.io.FileInputStream;
-import java.io.FileOutputStream;
 import java.net.Socket;
 import java.net.ServerSocket;
 import java.io.OutputStream;
 import java.io.InputStream;
-import java.io.PrintStream;
 /* -- end of imports -- */
 
 class S3 {
@@ -20,20 +21,26 @@ class S3 {
 public static void main(String [] a) {   
   S3 bucket = new S3(Integer.parseInt(a[0]));
   bucket.run(0);
+
 }
 
 public S3 (int port) {
   PORT = port;
- }
+ }           
 
-int parse(byte[] buf) throws Exception
+int parse(byte[] buf) throws IOException
 {
+  // fill GET header buffer: /GET/fx://
   byte[] getFxHeaderBytes = {47,71,69,84,47,102,120,58,47,47};
-
+  // /GET/hx://
   byte[] getHxHeaderBytes = {47,71,69,84,47,104,120,58,47,47};
 
+
+
   for (int i = 0; i < buf.length; i++) {
+    // Check if the current sequence matches "Host:"
     if (isMatchingSequence(buf, getFxHeaderBytes, i)) {
+    // Extract the section of the file from the buffer
     int start = i + getFxHeaderBytes.length;
     int end = start;
     while (end < buf.length && buf[end] != ' ') {
@@ -44,11 +51,12 @@ int parse(byte[] buf) throws Exception
         fileSectionBytes[k] = buf[j];
     }
 
+    // get offset and length if they exist!
     long offsetValue = 0;
-    long lengthValue = -1; 
+    long lengthValue = -1;  //we use this later to see if is still = -1 it means that no lx value was there so we can then use file.length
 
-    byte[] oxbytes = new byte[]{38, 111, 120, 61};
-    byte[] lxbytes = new byte[]{38, 108, 120, 61}; 
+    byte[] oxbytes = new byte[]{38, 111, 120, 61}; // "&ox="
+    byte[] lxbytes = new byte[]{38, 108, 120, 61}; // "&lx="
     for (int z = 0; z < fileSectionBytes.length; z++) {
         if (isMatchingSequence(fileSectionBytes, oxbytes, z)) {
             offsetValue = getOffset(fileSectionBytes);
@@ -61,14 +69,18 @@ int parse(byte[] buf) throws Exception
             break;
         }
     }
+
+    // get the filename
     byte[] filename = new byte[fileSectionBytes.length];
     int filenameLength = 0;
     for (int f = 0; f < fileSectionBytes.length; f++) {
-        if (fileSectionBytes[f] == 0x26 && f + 4 < fileSectionBytes.length && 
-            fileSectionBytes[f + 1] == 0x6F && fileSectionBytes[f + 2] == 0x78 && 
-            fileSectionBytes[f + 3] == 0x3D)
+        if (fileSectionBytes[f] == '&' && f + 4 < fileSectionBytes.length && 
+            fileSectionBytes[f + 1] == 'o' && fileSectionBytes[f + 2] == 'x' && fileSectionBytes[f + 3] == '=') {
+            break; 
+        }
         filename[filenameLength++] = fileSectionBytes[f];
     }
+
     try {
         File file = new File(byte2str(filename, 0, filenameLength));
         if (file.exists()) {
@@ -76,8 +88,9 @@ int parse(byte[] buf) throws Exception
                 lengthValue = file.length() - offsetValue;
             }
             streamFileToSocket(file, sock, offsetValue, lengthValue);
+            System.out.println("FILE EXIST");
         } else {
-            throw new Exception();
+            System.out.println("File does not exist.");
         }
     } catch (Exception e) {
         e.printStackTrace();
@@ -85,6 +98,7 @@ int parse(byte[] buf) throws Exception
 }
 
 if (isMatchingSequence(buf, getHxHeaderBytes, i)) {
+    // Extract the section of the remote file URL from the buffer
     int start = i + getHxHeaderBytes.length;
     int end = start;
     while (end < buf.length && buf[end] != ' ') {
@@ -94,14 +108,17 @@ if (isMatchingSequence(buf, getHxHeaderBytes, i)) {
     for (int j = start, k = 0; j < end; j++, k++) {
         fileSectionBytes[k] = buf[j];
     }
+
+    // Get offset and length if they exist
     long offsetValue = 0;
     long lengthValue = -1;
-    byte[] oxbytes = new byte[]{38, 111, 120, 61}; 
-    byte[] lxbytes = new byte[]{38, 108, 120, 61}; 
+
+    byte[] oxbytes = new byte[]{38, 111, 120, 61}; // "&ox="
+    byte[] lxbytes = new byte[]{38, 108, 120, 61}; // "&lx="
     for (int z = 0; z < fileSectionBytes.length; z++) {
         if (isMatchingSequence(fileSectionBytes, oxbytes, z)) {
             offsetValue = getOffset(fileSectionBytes);
-             break;
+            break;
         }
     }
     for (int z = 0; z < fileSectionBytes.length; z++) {
@@ -110,18 +127,32 @@ if (isMatchingSequence(buf, getHxHeaderBytes, i)) {
             break;
         }
     }
-    fetchAndStreamFileToSocket(fileSectionBytes, sock, offsetValue, lengthValue); 
+
+    // Print offset and length if they were found
+    if (offsetValue != 0) {
+        System.out.println("Offset (Ox): " + offsetValue);
+    } else {
+        System.out.println("No offset in link!");
+    }
+    if (lengthValue != -1) {
+        System.out.println("Length (Lx): " + lengthValue);
+    } else {
+        System.out.println("No length in link!");
+    }
+
+    // Fetch and stream the file from the remote URL
+    fetchAndStreamFileToSocket(fileSectionBytes, sock, offsetValue, lengthValue); // Assuming remote URL is in fileSectionBytes
 }
   }
-  return HOST.length;
+  return 0;
 }
 
-int dns(int X) throws Exception {                         
+int dns(int X) {                         
   InetSocketAddress isa = new InetSocketAddress(byte2str(HOST,0,HOST.length),PORT);
   if (!isa.isUnresolved()) {
   Addr = isa.getAddress();
   } else {
-        throw new Exception();
+      System.out.println("Hostname could not be resolved.");
   }
   return X;
 }
@@ -134,6 +165,7 @@ int run(int X)
       s0 = new ServerSocket(PORT);
       while (true) {
         try {
+            System.out.println("Waiting for connections...");
             byte [] b0 = new byte[1024]; // temp buffer size
             sock = s0.accept();
 
@@ -148,17 +180,19 @@ int run(int X)
         } 
       }
     } catch (Exception e) {
-        e.printStackTrace();
+      System.out.print(e.getMessage());
     } finally {
       if (s0 != null) {
         try {
           s0.close();
         } catch (Exception e) {
-        e.printStackTrace();
+          System.out.println(e.getMessage());
         }
       }
     }
-  return 0;
+  // } /* while loop */
+  int ret = 0;
+  return ret;
 } /* run */
 
 private static boolean isMatchingSequence(byte[] source, byte[] target, int start) {
@@ -172,48 +206,42 @@ private static boolean isMatchingSequence(byte[] source, byte[] target, int star
     }
     return true;
 }
-
 String byte2str(byte []b, int i, int j)
 {
-  // byte []b = array of characters
-  // int i = offset index
-  // int j = length
-  byte[] errorMsg = {
-    73, 110, 118, 97, 108, 105, 100, 32, 
-    111, 102, 102, 115, 101, 116, 32, 111, 
-    114, 32, 108, 101, 110, 103, 116, 104
-    };
-
     // Ensure the offset and length are within the bounds of the byte array
   if (i < 0 || j < 0 || i + j > b.length) {
-      throw new IllegalArgumentException(byte2str(errorMsg,0,errorMsg.length));
+      throw new IllegalArgumentException("Invalid offset or length");
   }
   // Create a new String from the specified range of the byte array
   return new String(b, i, j);
+  // byte [] b2 = new byte [1];
+
+  // return new String( b2 );
 }
 
-private long byte2long(byte[] b, int offset, int length) throws Exception{
+private long byte2long(byte[] b, int offset, int length) {
     if (offset < 0 || length < 0 || offset + length > b.length) {
-        throw new Exception();
+        throw new IllegalArgumentException("Invalid offset or length");
     }
 
     long result = 0;
     for (int i = offset; i < offset + length; i++) {
-        if (b[i] < 48 || b[i] > 57) {
-        throw new Exception();
+        if (b[i] < '0' || b[i] > '9') {
+            System.out.println("Invalid byte at position " + i + ": " + b[i] + " (char representation: " + (char) b[i] + ")");
+            throw new IllegalArgumentException("Invalid byte for number conversion");
         }
-        int digit = b[i] - 48;
+        int digit = b[i] - '0';
         result = result * 10 + digit;
     }
     return result;
 }
 
-byte[] extractBytes(byte[]b, int i, int j) throws Exception
+byte[] extractBytes(byte[]b, int i, int j)
 {
   // return a trunkated byte array, removing bytes starting at offset i and of length j
   // Check if the indices are valid
   if (i < 0 || j < 0 || i + j > b.length) {
-              throw new Exception();
+      throw new IllegalArgumentException("Invalid index or length");
   }
 
   // Calculate the length of the new array
@@ -230,9 +258,10 @@ byte[] extractBytes(byte[]b, int i, int j) throws Exception
   return t;
 }
 
-private void streamFileToSocket(File file, Socket socket, long offset, long length) throws Exception{
+private void streamFileToSocket(File file, Socket socket, long offset, long length) {
     if (socket == null || socket.isClosed() || !socket.isConnected()) {
-        throw new Exception();
+        System.out.println("Socket is closed, null, or not connected.");
+        return;
     }
 
     try (FileInputStream fileInputStream = new FileInputStream(file);
@@ -252,7 +281,7 @@ private void streamFileToSocket(File file, Socket socket, long offset, long leng
         while (skippedBytes < offset) {
             long result = fileInputStream.skip(offset - skippedBytes);
             if (result <= 0) {
-        throw new Exception();
+                throw new IOException("Unable to skip the desired number of bytes");
             }
             skippedBytes += result;
         }
@@ -265,6 +294,7 @@ private void streamFileToSocket(File file, Socket socket, long offset, long leng
         byte[] buffer = new byte[4096];
         int bytesRead;
         long totalBytesRead = 0;
+
         while (totalBytesRead < length) {
             int bytesToRead = Min(buffer.length, (int)(length - totalBytesRead));
             bytesRead = fileInputStream.read(buffer, 0, bytesToRead);
@@ -275,46 +305,15 @@ private void streamFileToSocket(File file, Socket socket, long offset, long leng
             outputStream.write(buffer, 0, bytesRead);
             totalBytesRead += bytesRead;
         }
+        System.out.println("HTTP response sent!");
         outputStream.flush();
 
-    } catch (Exception e) {
-        e.printStackTrace();
+    } catch (IOException e) {
+        System.out.println("IO Exception: " + e.getMessage());
     }
 }
 
-private static int assignBytes(byte[] source, byte[] destination, int startPos) {
-    for (int i = 0; i < source.length; i++) {
-        destination[startPos + i] = source[i];
-    }
-    return startPos + source.length;
-}
-
-public static byte[] createHttpGetRequest(byte[] filePath, byte[] hostName) {
-    byte[] method = {(byte) 0x47, (byte) 0x45, (byte) 0x54, (byte) 0x20}; 
-    byte[] httpVersion = {(byte) 0x20, (byte) 0x48, (byte) 0x54, (byte) 0x54, (byte) 0x50, 
-                          (byte) 0x2F, (byte) 0x31, (byte) 0x2E, (byte) 0x31, (byte) 0x0D, (byte) 0x0A}; 
-    byte[] hostHeaderPrefix = {(byte) 0x48, (byte) 0x6F, (byte) 0x73, (byte) 0x74, (byte) 0x3A, 
-                               (byte) 0x20}; 
-    byte[] newLine = {(byte) 0x0D, (byte) 0x0A}; 
-
-    int totalLength = method.length + filePath.length + httpVersion.length +
-                      hostHeaderPrefix.length + hostName.length + 2 * newLine.length;
-
-    byte[] request = new byte[totalLength];
-
-    int pos = 0;
-    pos = assignBytes(method, request, pos);
-    pos = assignBytes(filePath, request, pos);
-    pos = assignBytes(httpVersion, request, pos);
-    pos = assignBytes(hostHeaderPrefix, request, pos);
-    pos = assignBytes(hostName, request, pos);
-    pos = assignBytes(newLine, request, pos);
-    assignBytes(newLine, request, pos); 
-
-    return request;
-}
-
-private void fetchAndStreamFileToSocket(byte[] fileURLBytes, Socket clientSocket, long offset, long length) throws Exception {
+private void fetchAndStreamFileToSocket(byte[] fileURLBytes, Socket clientSocket, long offset, long length) throws IOException {
     byte[] hostname = getHost(fileURLBytes);
     byte[] path = getPath(fileURLBytes);
 
@@ -322,8 +321,7 @@ private void fetchAndStreamFileToSocket(byte[] fileURLBytes, Socket clientSocket
     HOST = hostname;
     dns(0);
 
-    byte[] getRequest = createHttpGetRequest(path,hostname);
-
+    byte[] getRequest = makeGetRequest(path, hostname);
 
     try (Socket serverSocket = new Socket(Addr, 80); // default http port
          OutputStream serverOut = serverSocket.getOutputStream();
@@ -337,7 +335,7 @@ private void fetchAndStreamFileToSocket(byte[] fileURLBytes, Socket clientSocket
         }
 }
 
-private void sendContent(InputStream serverIn, OutputStream clientOut, long offset, long length) throws Exception {
+private void sendContent(InputStream serverIn, OutputStream clientOut, long offset, long length) throws IOException {
     if (offset == 0 && length < 0) {
         // Full content: stream directly, including server headers
         byte[] buffer = new byte[4096];
@@ -347,9 +345,7 @@ private void sendContent(InputStream serverIn, OutputStream clientOut, long offs
         }
     } else {
         //Skiip header we got from the get request
-        // skipHeader(serverIn); 
-        int contentLength = skipHeader(serverIn);
-        // Now you can use contentLength as needed
+        skipHeader(serverIn); 
 
         // Create and send new header for partial content
         byte[] headers = createHeaders(length);
@@ -358,9 +354,11 @@ private void sendContent(InputStream serverIn, OutputStream clientOut, long offs
 
         // Skip offset
         long skippedOffset = serverIn.skip(offset);
+        System.out.println("Skipped offset bytes: " + skippedOffset);
         if (skippedOffset < offset) {
-            throw new Exception();
+            throw new IOException("Unable to skip the desired number of bytes");
         }
+
         // send partial content
         byte[] buffer = new byte[4096];
         int bytesRead;
@@ -380,15 +378,15 @@ private int Min(int a, int b) {
 private byte[] createHeaders(long contentLength) {
     byte[] startHeaders = {
         // HTTP/1.1 200 OK and Content-Type: text/plain
-        0x48, 0x54, 0x54, 0x50, 0x2F, 0x31, 0x2E, 0x31, 0x20, 0x32, 0x30, 0x30, 0x20, 0x4F, 0x4B, 0x0D, 0x0A,
-        0x43, 0x6F, 0x6E, 0x74, 0x65, 0x6E, 0x74, 0x2D, 0x54, 0x79, 0x70, 0x65, 0x3A, 0x20, 0x74, 0x65, 0x78, 0x74, 0x2F, 0x70, 0x6C, 0x61, 0x69, 0x6E, 0x0D, 0x0A,
-        // Content-Length:
-        0x43, 0x6F, 0x6E, 0x74, 0x65, 0x6E, 0x74, 0x2D, 0x4C, 0x65, 0x6E, 0x67, 0x74, 0x68, 0x3A, 0x20
+        'H', 'T', 'T', 'P', '/', '1', '.', '1', ' ', '2', '0', '0', ' ', 'O', 'K', '\r', '\n',
+        'C', 'o', 'n', 't', 'e', 'n', 't', '-', 'T', 'y', 'p', 'e', ':', ' ', 't', 'e', 'x', 't', '/', 'p', 'l', 'a', 'i', 'n', '\r', '\n',
+        // Content-Length: 
+        'C', 'o', 'n', 't', 'e', 'n', 't', '-', 'L', 'e', 'n', 'g', 't', 'h', ':', ' '
     };
     byte[] contentLengthBytes = longToBytes(contentLength);
     byte[] endHeaders = {
         // Connection: close and new lines
-        0x0D, 0x0A, 0x43, 0x6F, 0x6E, 0x6E, 0x65, 0x63, 0x74, 0x69, 0x6F, 0x6E, 0x3A, 0x20, 0x63, 0x6C, 0x6F, 0x73, 0x65, 0x0D, 0x0A, 0x0D, 0x0A
+        '\r', '\n', 'C', 'o', 'n', 'n', 'e', 'c', 't', 'i', 'o', 'n', ':', ' ', 'c', 'l', 'o', 's', 'e', '\r', '\n', '\r', '\n'
     };
 
     byte[] headers = new byte[startHeaders.length + contentLengthBytes.length + endHeaders.length];
@@ -410,20 +408,19 @@ private byte[] createHeaders(long contentLength) {
 
 private byte[] createErrorMessage() {
     return new byte[] {
-        // Unable to skip the desired number of bytes
-        0x55, 0x6E, 0x61, 0x62, 0x6C, 0x65, 0x20, // Unable 
-        0x74, 0x6F, 0x20, // to 
-        0x73, 0x6B, 0x69, 0x70, 0x20, // skip 
-        0x74, 0x68, 0x65, 0x20, // the 
-        0x64, 0x65, 0x73, 0x69, 0x72, 0x65, 0x64, 0x20, // desired 
-        0x6E, 0x75, 0x6D, 0x62, 0x65, 0x72, 0x20, // number 
-        0x6F, 0x66, 0x20, // of 
-        0x62, 0x79, 0x74, 0x65, 0x73 // bytes
+        'U', 'n', 'a', 'b', 'l', 'e', ' ', 
+        't', 'o', ' ', 
+        's', 'k', 'i', 'p', ' ', 
+        't', 'h', 'e', ' ', 
+        'd', 'e', 's', 'i', 'r', 'e', 'd', ' ', 
+        'n', 'u', 'm', 'b', 'e', 'r', ' ', 
+        'o', 'f', ' ', 
+        'b', 'y', 't', 'e', 's'
     };
 }
 
 private byte[] longToBytes(long value) {
-    if (value == 0) return new byte[] {48};
+    if (value == 0) return new byte[] {'0'};
 
     // find the num of digits in our value
     int length = 0;
@@ -437,44 +434,32 @@ private byte[] longToBytes(long value) {
     int i = length - 1;
     while (value > 0) {
         long digit = value % 10;
-        result[i--] = (byte) (48 + digit);
+        result[i--] = (byte) ('0' + digit);
         value /= 10;
     }
     return result;
 }
 
 private long getOffset(byte[] fileSectionBytes) {
-    byte[] oxbytes = new byte[] {38, 111, 120, 61};
+    byte[] oxbytes = new byte[] {38, 111, 120, 61}; // "&ox="
     int oxStart = findSequence(fileSectionBytes, oxbytes) + oxbytes.length;
-    int oxEnd = findNextDelimiter(fileSectionBytes, oxStart, (byte)38);
+    int oxEnd = findNextDelimiter(fileSectionBytes, oxStart, (byte)'&');
     byte[] offsetBytes = new byte[oxEnd - oxStart];
     for (int i = oxStart, k = 0; i < oxEnd; i++, k++) {
         offsetBytes[k] = fileSectionBytes[i];
     }
-    try {
-        return byte2long(offsetBytes, 0, offsetBytes.length);
-    } catch (Exception e) {
-        e.printStackTrace();
-        return -1;
-    }
+    return byte2long(offsetBytes, 0, offsetBytes.length);
 }
 
 private long getLength(byte[] fileSectionBytes) {
-    byte[] lxbytes = new byte[] {38, 108, 120, 61}; 
+    byte[] lxbytes = new byte[] {38, 108, 120, 61}; // "&lx="
     int lxStart = findSequence(fileSectionBytes, lxbytes) + lxbytes.length;
-    int lxEnd = findNextDelimiter(fileSectionBytes, lxStart, (byte)38);
+    int lxEnd = findNextDelimiter(fileSectionBytes, lxStart, (byte)'&');
     byte[] lengthBytes = new byte[lxEnd - lxStart];
     for (int i = lxStart, k = 0; i < lxEnd; i++, k++) {
         lengthBytes[k] = fileSectionBytes[i];
     }
-    try {
-           return byte2long(lengthBytes, 0, lengthBytes.length);
- 
-    }
-    catch (Exception e) {
-        e.printStackTrace();
-        return -1;
-    }
+    return byte2long(lengthBytes, 0, lengthBytes.length);
 }
 
 private int findSequence(byte[] source, byte[] sequence) {
@@ -498,15 +483,16 @@ private int findNextDelimiter(byte[] source, int start, byte delimiter) {
             return i;
         }
     }
-    return source.length; 
+    return source.length; // Return the array length if no delimiter is found
 }
 
 private byte[] getHost(byte[] url) {
-    byte[] protocolSeparator = new byte[] {58, 47, 47}; 
+    byte[] protocolSeparator = new byte[] {58, 47, 47}; // "://"
 
     int start = indexOf(url, protocolSeparator) + protocolSeparator.length;
-    if (start < protocolSeparator.length) return new byte[0]; 
+    if (start < protocolSeparator.length) return new byte[0]; // "://" not found
 
+    // Find the end of the hostname (before any '/' or '&' or ' ')
     int end = start;
     while (end < url.length && url[end] != 47 && url[end] != 38 && url[end] != 32) {
         end++;
@@ -520,13 +506,13 @@ private byte[] getHost(byte[] url) {
 }
 
 private byte[] getPath(byte[] url) {
+    // Find the start of the path (first '/' after "://")
+    int start = indexOf(url, (byte) 47, indexOf(url, new byte[] {58, 47, 47}) + 3); // 58, 47, 47 = "://"
+    if (start == -1) return new byte[0]; // No '/' found after "://"
 
-    int start = indexOf(url, (byte) 47, indexOf(url, new byte[] {58, 47, 47}) + 3); 
-    if (start == -1) return new byte[0]; 
-
-   
+    // Find the end of the path (before any '&' or ' ')
     int end = start;
-    while (end < url.length && url[end] != 38 && url[end] != 32) {
+    while (end < url.length && url[end] != '&' && url[end] != ' ') {
         end++;
     }
 
@@ -537,6 +523,7 @@ private byte[] getPath(byte[] url) {
     return path;
 }
 
+// For a single byte "target"
 private int indexOf(byte[] source, byte target, int fromIndex) {
     for (int i = fromIndex; i < source.length; i++) {
         if (source[i] == target) {
@@ -545,7 +532,7 @@ private int indexOf(byte[] source, byte target, int fromIndex) {
     }
     return -1;
 }
-
+// For a sequence of bytes 
 private int indexOf(byte[] source, byte[] target) {
     if (target.length == 0 || source.length == 0) return -1;
     for (int i = 0; i <= source.length - target.length; i++) {
@@ -561,44 +548,68 @@ private int indexOf(byte[] source, byte[] target) {
     return -1;
 }
 
-private int skipHeader(InputStream in) throws Exception {
-    int readByte;
+private byte[] makeGetRequest(byte[] path, byte[] hostname) {
+    byte[] getRequestStart = {
+        'G', 'E', 'T', ' '
+    };
+    byte[] getRequestMiddle = {
+        ' ', 'H', 'T', 'T', 'P', '/', '1', '.', '1', '\r', '\n',
+        'H', 'o', 's', 't', ':', ' '
+    };
+    byte[] getRequestEnd = {
+        '\r', '\n', '\r', '\n'
+    };
+
+    // Calculate total length
+    int totalLength = getRequestStart.length + path.length + getRequestMiddle.length + hostname.length + getRequestEnd.length;
+
+    byte[] getRequest = new byte[totalLength];
+    int position = 0;
+
+    // Copy getRequestStart
+    for (byte b : getRequestStart) {
+        getRequest[position++] = b;
+    }
+
+    // Copy path
+    for (byte b : path) {
+        getRequest[position++] = b;
+    }
+
+    // Copy getRequestMiddle
+    for (byte b : getRequestMiddle) {
+        getRequest[position++] = b;
+    }
+
+    // Copy hostname
+    for (byte b : hostname) {
+        getRequest[position++] = b;
+    }
+
+    // Copy getRequestEnd
+    for (byte b : getRequestEnd) {
+        getRequest[position++] = b;
+    }
+
+    return getRequest;
+}
+
+private void skipHeader(InputStream in) throws IOException {
+    int readByte = 0;
     int newLineSeqCount = 0;
-    boolean isContentLength = false;
-    int contentLength = 0;
-    int[] contentLengthKey = new int[]{99, 111, 110, 116, 101, 110, 116, 45, 108, 101, 110, 103, 116, 104, 58};
-    int contentLengthKeyIndex = 0;
+
 
     while (newLineSeqCount < 4) {
         readByte = in.read();
         if (readByte == -1) break;
-       
-        if (readByte == contentLengthKey[contentLengthKeyIndex]) {
-            contentLengthKeyIndex++;
-            if (contentLengthKeyIndex == contentLengthKey.length) {
-                isContentLength = true;
-                contentLengthKeyIndex = 0; 
-            }
-        } else {
-            contentLengthKeyIndex = 0; 
-        }
 
-        if (isContentLength) {
-            if (readByte >= 48 && readByte <= 57) { 
-                contentLength = contentLength * 10 + (readByte - 48); 
-            } else if (readByte == 13 || readByte == 10) { 
-                isContentLength = false; 
-            }
-        }
 
         if ((readByte == 13 && newLineSeqCount % 2 == 0) || (readByte == 10 && newLineSeqCount % 2 != 0)) {
-            newLineSeqCount++; 
+            newLineSeqCount++; // find '\r' or '\n' in the sequence
         } else {
-            newLineSeqCount = 0; 
+            newLineSeqCount = 0; // Reset if sequence is broken
         }
     }
-
-    return contentLength;
 }
 
 /* --- end of all methods --- */
